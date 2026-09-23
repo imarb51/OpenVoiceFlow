@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  /* Transparent so the frameless overlay window shows only its own rounded
+     pill, not a rectangular page background. The Settings window paints
+     over this with its own opaque background on <main>. */
+  background: transparent;
+}
+
+body {
+  font-family:
+    Inter,
+    Avenir,
+    Helvetica,
+    Arial,
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

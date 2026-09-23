@@ -1,0 +1,16 @@
+{
+  "name": "openvoiceflow",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Open-source, privacy-first, local-first voice dictation for the desktop.",
+  "license": "MIT",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run tauri dev --workspace=desktop",
+    "build": "npm run build --workspace=desktop",
+    "tauri": "npm run tauri --workspace=desktop"
+  }
+}
