@@ -56,3 +56,9 @@ export type TranscriptionStatus = "queued" | "transcribing" | "done" | "error";
 export interface RecordingErrorPayload {
   message: string;
 }
+
+export interface CommandStatusPayload {
+  status: "checking" | "started" | "completed" | "failed" | "fallback";
+  action: string | null;
+  message: string;
+}

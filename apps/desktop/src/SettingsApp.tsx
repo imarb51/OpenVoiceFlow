@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
+import EnginePanel from "./EnginePanel";
 import type {
   ModelDownloadFailedPayload,
   ModelDownloadProgressPayload,
@@ -10,6 +11,22 @@ import type {
 } from "./types";
 
 type Tab = "hotkey" | "transcripts";
+type AiProvider = "jev" | "ollama" | "open_ai" | "anthropic" | "xai" | "groq";
+
+interface AiSettings {
+  provider: AiProvider;
+  model: string;
+  has_api_key: boolean;
+}
+
+const PROVIDER_OPTIONS: { id: AiProvider; label: string; model: string }[] = [
+  { id: "jev", label: "Jev", model: "jev-latest" },
+  { id: "ollama", label: "Ollama (local)", model: "gemma4:12b" },
+  { id: "open_ai", label: "OpenAI", model: "gpt-4.1-mini" },
+  { id: "anthropic", label: "Claude (Anthropic)", model: "claude-haiku-4-5-20251001" },
+  { id: "xai", label: "Grok (xAI)", model: "grok-4.7" },
+  { id: "groq", label: "Groq", model: "openai/gpt-oss-20b" },
+];
 
 const MODIFIER_CODES = new Set(["ControlLeft", "ControlRight", "AltLeft", "AltRight", "ShiftLeft", "ShiftRight", "MetaLeft", "MetaRight"]);
 
@@ -134,6 +151,286 @@ function HotkeyTab() {
       </div>
 
       {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+    </div>
+  );
+}
+
+function AiProviderTab() {
+  const [provider, setProvider] = useState<AiProvider>("jev");
+  const [model, setModel] = useState("jev-latest");
+  const [apiKey, setApiKey] = useState("");
+  const [revealedKey, setRevealedKey] = useState<string | null>(null);
+  const [loadingSavedKey, setLoadingSavedKey] = useState(false);
+  const currentProviderRef = useRef<AiProvider>("jev");
+  const [keyStatusByProvider, setKeyStatusByProvider] = useState<Partial<Record<AiProvider, boolean>>>({});
+  const keyStatus = keyStatusByProvider[provider];
+  const hasApiKey = keyStatus === true;
+  const requiresApiKey = provider !== "ollama";
+  const providerLabel = PROVIDER_OPTIONS.find((option) => option.id === provider)?.label ?? provider;
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [localModels, setLocalModels] = useState<string[]>([]);
+  const [loadingLocalModels, setLoadingLocalModels] = useState(false);
+  const [localModelsError, setLocalModelsError] = useState<string | null>(null);
+
+  const refreshLocalModels = useCallback(async () => {
+    setLoadingLocalModels(true);
+    setLocalModelsError(null);
+    try {
+      setLocalModels(await invoke<string[]>("list_ollama_models"));
+    } catch (err) {
+      setLocalModelsError(String(err));
+    } finally {
+      setLoadingLocalModels(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    invoke<AiSettings>("get_ai_settings")
+      .then((settings) => {
+        currentProviderRef.current = settings.provider;
+        setProvider(settings.provider);
+        setModel(settings.model);
+        setKeyStatusByProvider((current) => ({ ...current, [settings.provider]: settings.has_api_key }));
+        if (settings.provider === "ollama") void refreshLocalModels();
+      })
+      .catch((err) => setError(String(err)));
+  }, [refreshLocalModels]);
+
+  const selectProvider = useCallback((next: AiProvider) => {
+    currentProviderRef.current = next;
+    setProvider(next);
+    setModel(PROVIDER_OPTIONS.find((option) => option.id === next)?.model ?? "");
+    if (next === "ollama") void refreshLocalModels();
+    setApiKey("");
+    setRevealedKey(null);
+    invoke<boolean>("has_ai_api_key", { provider: next })
+      .then((hasKey) => setKeyStatusByProvider((current) => ({ ...current, [next]: hasKey })))
+      .catch((err) => setError(String(err)));
+    setMessage(null);
+    setError(null);
+  }, [refreshLocalModels]);
+
+  const toggleSavedKeyVisibility = useCallback(async () => {
+    if (revealedKey !== null) {
+      setRevealedKey(null);
+      return;
+    }
+
+    const requestedProvider = provider;
+    setLoadingSavedKey(true);
+    setError(null);
+    try {
+      const savedKey = await invoke<string | null>("get_ai_api_key", { provider: requestedProvider });
+      if (currentProviderRef.current !== requestedProvider) return;
+      if (savedKey === null) {
+        setKeyStatusByProvider((current) => ({ ...current, [requestedProvider]: false }));
+        setError("No saved API key was found for this provider.");
+        return;
+      }
+      setRevealedKey(savedKey);
+    } catch (err) {
+      if (currentProviderRef.current === requestedProvider) setError(String(err));
+    } finally {
+      setLoadingSavedKey(false);
+    }
+  }, [provider, revealedKey]);
+
+  const save = useCallback(async () => {
+    setBusy(true);
+    setMessage(null);
+    setError(null);
+    try {
+      const settings = await invoke<AiSettings>("save_ai_settings", {
+        provider,
+        model,
+        apiKey: apiKey.trim() || null,
+      });
+      setKeyStatusByProvider((current) => ({ ...current, [provider]: settings.has_api_key }));
+      setApiKey("");
+      setRevealedKey(null);
+      setMessage(provider === "ollama" ? "Local Ollama settings saved." : "Provider settings saved securely.");
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [apiKey, model, provider]);
+
+  const testConnection = useCallback(async () => {
+    setBusy(true);
+    setMessage(null);
+    setError(null);
+    try {
+      const settings = await invoke<AiSettings>("save_ai_settings", {
+        provider,
+        model,
+        apiKey: apiKey.trim() || null,
+      });
+      setKeyStatusByProvider((current) => ({ ...current, [provider]: settings.has_api_key }));
+      setApiKey("");
+      setRevealedKey(null);
+      await invoke("test_ai_connection", { provider, model });
+      setMessage("Connection successful.");
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [apiKey, model, provider]);
+
+  const removeKey = useCallback(async () => {
+    setBusy(true);
+    setMessage(null);
+    setError(null);
+    try {
+      await invoke("remove_ai_api_key", { provider });
+      setKeyStatusByProvider((current) => ({ ...current, [provider]: false }));
+      setApiKey("");
+      setRevealedKey(null);
+      setMessage("Saved API key removed.");
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [provider]);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div>
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+          AI provider
+        </h2>
+        <p className="mt-1 text-xs text-neutral-400 dark:text-neutral-500">
+          Choose the service that routes voice requests to OpenVoiceFlow actions.
+        </p>
+        {provider === "jev" && <p className="mt-2 text-xs text-amber-600">Jev's classification interface cannot run the action engine. Choose Ollama, OpenAI, Groq, Grok, or Anthropic.</p>}
+        {provider === "ollama" && <p className="mt-2 text-xs text-neutral-500">Connects to the local Ollama server at http://localhost:11434. No API key is required; use a model name shown by `ollama list`.</p>}
+      </div>
+
+      <label className="flex flex-col gap-1 text-xs font-medium">
+        Provider
+        <select
+          value={provider}
+          onChange={(event) => selectProvider(event.target.value as AiProvider)}
+          className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+        >
+          {PROVIDER_OPTIONS.map((option) => (
+            <option key={option.id} value={option.id}>{option.label}</option>
+          ))}
+        </select>
+      </label>
+
+      <label className="flex flex-col gap-1 text-xs font-medium">
+        Model ID
+        {provider === "ollama" ? (
+          <div className="flex gap-2">
+            <select
+              value={model}
+              onChange={(event) => setModel(event.target.value)}
+              className="min-w-0 flex-1 rounded-lg border border-neutral-300 bg-white px-3 py-2 font-mono text-sm dark:border-neutral-700 dark:bg-neutral-900"
+            >
+              {model && !localModels.includes(model) && <option value={model}>{model} (not installed)</option>}
+              {localModels.map((name) => <option key={name} value={name}>{name}</option>)}
+              {!model && localModels.length === 0 && <option value="">No local models found</option>}
+            </select>
+            <button
+              type="button"
+              onClick={() => void refreshLocalModels()}
+              disabled={loadingLocalModels}
+              className="rounded-lg border border-neutral-300 px-3 py-2 text-xs dark:border-neutral-700 disabled:opacity-50"
+            >
+              {loadingLocalModels ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
+        ) : (
+          <input
+            value={model}
+            onChange={(event) => setModel(event.target.value)}
+            spellCheck={false}
+            className="rounded-lg border border-neutral-300 bg-white px-3 py-2 font-mono text-sm dark:border-neutral-700 dark:bg-neutral-900"
+            placeholder="Provider model ID"
+          />
+        )}
+        {provider === "ollama" && localModelsError && <span role="alert" className="font-normal text-red-500">{localModelsError}</span>}
+        {provider === "ollama" && !loadingLocalModels && !localModelsError && localModels.length === 0 && <span className="font-normal text-neutral-500">No local models found. Pull a model in Ollama, then refresh.</span>}
+      </label>
+
+      {requiresApiKey && <div className="flex flex-col gap-1 text-xs">
+        <p className={hasApiKey ? "font-medium text-emerald-600 dark:text-emerald-400" : "font-medium text-neutral-500 dark:text-neutral-400"}>
+          {keyStatus === undefined
+            ? `Checking saved API key for ${providerLabel}…`
+            : hasApiKey
+              ? `API key saved securely for ${providerLabel}.`
+              : `No API key saved for ${providerLabel}.`}
+        </p>
+        {hasApiKey && <p className="text-neutral-400 dark:text-neutral-500">To replace it, enter a new key below and save. Use “Show saved key” to view or copy the current key.</p>}
+      </div>}
+
+      {requiresApiKey && <label className="flex flex-col gap-1 text-xs font-medium">
+        {hasApiKey ? "Replace API key" : "API key"}
+        <input
+          type={revealedKey === null ? "password" : "text"}
+          autoComplete="new-password"
+          value={revealedKey ?? apiKey}
+          onChange={(event) => {
+            setApiKey(event.target.value);
+            setRevealedKey(null);
+          }}
+          className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+          placeholder={hasApiKey ? "Enter a new key to replace the saved key" : "Paste this provider's API key"}
+        />
+        <span className="font-normal text-neutral-400">
+          Stored in Windows Credential Manager. Leave blank to keep the saved key. Ordinary dictation and direct app launches stay local; complex desktop commands are sent to the selected provider.
+        </span>
+      </label>}
+
+      <div className="flex flex-wrap gap-2">
+        {requiresApiKey && hasApiKey && (
+          <button
+            type="button"
+            disabled={busy || loadingSavedKey}
+            onClick={toggleSavedKeyVisibility}
+            className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800 disabled:opacity-50"
+          >
+            {loadingSavedKey ? "Loading key…" : revealedKey === null ? "Show saved key" : "Hide saved key"}
+          </button>
+        )}
+        <button
+          type="button"
+          disabled={busy || !model.trim()}
+          onClick={save}
+          className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+        >
+          Save provider
+        </button>
+        <button
+          type="button"
+          disabled={busy || !model.trim() || (requiresApiKey && !hasApiKey && !apiKey.trim())}
+          onClick={testConnection}
+          className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800 disabled:opacity-50"
+        >
+          Test connection
+        </button>
+        {requiresApiKey && hasApiKey && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={removeKey}
+            className="rounded-lg border border-red-300 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-900 dark:text-red-400 disabled:opacity-50"
+          >
+            Remove key
+          </button>
+        )}
+      </div>
+
+      {message && <p className="text-xs text-emerald-600 dark:text-emerald-400">{message}</p>}
+      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+      <p className="text-xs text-neutral-400 dark:text-neutral-500">
+        Action execution is limited to the apps supported by OpenVoiceFlow. The app does not execute model-generated shell commands.
+      </p>
     </div>
   );
 }
@@ -319,7 +616,14 @@ function ModelBanner() {
 }
 
 function SettingsApp() {
-  const [tab, setTab] = useState<Tab>("hotkey");
+  const [tab, setTab] = useState<Tab | "ai" | "engine">("hotkey");
+  useEffect(() => {
+    const subscription = listen("engine-needs-attention", () => setTab("engine"));
+    invoke<import("./EnginePanel").EngineTask[]>("get_engine_tasks").then(tasks => {
+      if (tasks.some(t => ["needs_clarification", "awaiting_confirmation"].includes(t.status))) setTab("engine");
+    }).catch(() => {});
+    return () => { void subscription.then(unlisten => unlisten()); };
+  }, []);
 
   return (
     <main className="min-h-screen bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-50">
@@ -330,12 +634,14 @@ function SettingsApp() {
 
         <ModelBanner />
 
-        <nav className="flex gap-1 rounded-lg bg-neutral-100 p-1 dark:bg-neutral-900">
+        <nav className="grid grid-cols-2 gap-1 rounded-lg bg-neutral-100 p-1 dark:bg-neutral-900">
           {(
             [
               ["hotkey", "Hotkey"],
+              ["ai", "AI Provider"],
+              ["engine", "Engine"],
               ["transcripts", "Transcripts"],
-            ] as [Tab, string][]
+            ] as [Tab | "ai" | "engine", string][]
           ).map(([value, label]) => (
             <button
               key={value}
@@ -352,7 +658,9 @@ function SettingsApp() {
           ))}
         </nav>
 
-        <div className="flex-1">{tab === "hotkey" ? <HotkeyTab /> : <TranscriptsTab />}</div>
+        <div className="flex-1">
+          {tab === "hotkey" ? <HotkeyTab /> : tab === "ai" ? <AiProviderTab /> : tab === "engine" ? <EnginePanel /> : <TranscriptsTab />}
+        </div>
       </div>
     </main>
   );

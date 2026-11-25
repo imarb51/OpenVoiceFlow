@@ -1,14 +1,18 @@
-//! Local speech-to-text: a small provider trait plus the Phase 2 implementation
+//! Local speech-to-text: the speech engine trait plus the Phase 2 implementation
 //! (`whisper_engine`), a persistent transcription worker (`worker`), and model
 //! download/status handling (`model_manager`). See docs/ARCHITECTURE.md.
 
 use std::path::Path;
 
 mod model_manager;
+mod provider;
 mod whisper_engine;
 mod worker;
 
-pub use model_manager::{download_model, model_path, model_status, ModelDownloadGuard, ModelStatus};
+pub use model_manager::{
+    download_model, model_path, model_status, ModelDownloadGuard, ModelStatus,
+};
+pub use provider::test_connection;
 pub use whisper_engine::WhisperCppEngine;
 pub use worker::{spawn_worker, SpeechWorkerHandle};
 

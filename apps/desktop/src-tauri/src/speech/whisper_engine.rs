@@ -77,13 +77,23 @@ impl SpeechEngine for WhisperCppEngine {
             let Some(segment) = state.get_segment(i) else {
                 continue;
             };
+            // Whisper can occasionally produce a plausible phrase from room
+            // noise or a recording where the user never spoke. Discard
+            // segments it classifies as non-speech before they reach routing.
+            if segment.no_speech_probability() >= 0.6 {
+                continue;
+            }
             let text = segment
                 .to_str()
                 .map_err(|e| SpeechError::TranscribeFailed(e.to_string()))?;
+            let text = text.trim();
+            if text.is_empty() {
+                continue;
+            }
             if !transcript.is_empty() {
                 transcript.push(' ');
             }
-            transcript.push_str(text.trim());
+            transcript.push_str(text);
         }
 
         Ok(transcript)

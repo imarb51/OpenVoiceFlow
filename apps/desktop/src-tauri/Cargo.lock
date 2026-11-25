@@ -1019,6 +1019,7 @@ name = "desktop"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "base64 0.22.1",
  "chrono",
  "cpal",
  "crossbeam-channel",
@@ -1026,6 +1027,7 @@ dependencies = [
  "env_logger",
  "futures-util",
  "hound",
+ "image",
  "log",
  "reqwest",
  "rubato",
@@ -1038,6 +1040,8 @@ dependencies = [
  "tauri-plugin-single-instance",
  "thiserror 2.0.20",
  "whisper-rs",
+ "windows 0.61.3",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

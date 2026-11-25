@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
+import type { EngineTask } from "./EnginePanel";
 import type {
   AudioLevelPayload,
   ModelStatus,
@@ -73,6 +74,16 @@ function Waveform({ level }: { level: number }) {
 }
 
 function App() {
+  const [engineTask, setEngineTask] = useState<EngineTask | null>(null);
+  useEffect(() => {
+    const subscription = listen<EngineTask>("engine-task", ({ payload }) => {
+      if (payload.status !== "queued") setEngineTask(payload);
+    });
+    void subscription.then(() => invoke<EngineTask[]>("get_engine_tasks")).then(tasks => {
+      setEngineTask(current => current ?? tasks.find(t => !["queued", "completed", "failed", "cancelled"].includes(t.status)) ?? tasks[0] ?? null);
+    }).catch(() => {});
+    return () => { void subscription.then(unlisten => unlisten()); };
+  }, []);
   const [phase, setPhase] = useState<Phase>("idle");
   const [level, setLevel] = useState(0);
   const [modelMissing, setModelMissing] = useState(false);
@@ -153,14 +164,14 @@ function App() {
           {phase === "idle" && (
             <>
               <p className="truncate text-[11px] font-semibold leading-tight text-white">
-                OpenVoiceFlow
+                {engineTask && !["completed", "cancelled", "failed"].includes(engineTask.status) ? engineTask.status.replace(/_/g, " ") : "OpenVoiceFlow"}
               </p>
               <p
                 className={`truncate text-[9px] leading-tight ${
                   errorMessage ? "text-red-400" : "text-white/40"
                 }`}
               >
-                {errorMessage ??
+                {errorMessage ?? engineTask?.message ??
                   (modelMissing ? "Model missing — right-click" : "Hold Ctrl+Space")}
               </p>
             </>
@@ -170,6 +181,10 @@ function App() {
             <p className="truncate text-[11px] font-medium text-amber-300">Transcribing…</p>
           )}
         </div>
+
+        {engineTask && !["completed", "cancelled", "failed"].includes(engineTask.status) && <button
+          type="button" title="Cancel current task" aria-label="Cancel current task"
+          className="text-xs text-red-300" onClick={() => void invoke("cancel_engine_task", { taskId: engineTask.id })}>Stop</button>}
 
         {modelMissing && phase === "idle" && (
           <span

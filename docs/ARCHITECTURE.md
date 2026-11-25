@@ -1,8 +1,8 @@
 # Architecture
 
-OpenVoiceFlow is an open-source, privacy-first, local-first voice dictation
-desktop app: hold a hotkey, speak, and get cleaned-up text at the cursor, with
-local Whisper transcription by default and no required cloud dependency.
+OpenVoiceFlow is an open-source, local-first voice dictation and desktop
+actions app: hold a hotkey, speak, and get local Whisper transcription.
+Action routing can use a user-selected hosted AI provider; audio remains local.
 
 ## Overview
 
@@ -27,10 +27,15 @@ OpenVoiceFlow
 ```
 
 The desktop shell is Tauri 2 (Rust backend + React/TypeScript/Vite frontend).
-Everything runs on-device: speech-to-text and text injection are local,
-period — there is no LLM anywhere in this product (no cloud provider, no
-local LLM cleanup pass). Accuracy and speed are expected to come from the
-local Whisper pipeline itself, not a post-processing model.
+Audio capture, speech-to-text, intent routing, and action execution are local.
+Ordinary dictation is inserted exactly into the captured foreground field and
+stops without a provider request. Clear app-launch requests are resolved using
+the local installed-application catalog and launched directly. More complex
+desktop commands go to the selected tool-capable
+provider with bounded application/accessibility context. An optional vision
+provider receives target-window screenshots when needed. Keys remain in
+Windows Credential Manager; raw audio stays local. Provider failures preserve
+the transcript and fail the task without injecting it into a window.
 
 ## Provider abstractions
 
@@ -40,8 +45,16 @@ touching the callers:
 - `SpeechEngine` — `initialize()`, `transcribe()`, `stream()`, `unload()`.
   Implemented in Phase 2 as `WhisperCppEngine` via `whisper-rs` (CPU-only,
   batch transcription; `stream()` is reserved for a later real-time phase).
-  The trait exists so a different *local* engine could be swapped in later,
-  not to leave room for a cloud or LLM-based provider.
+  The trait exists so a different local engine could be swapped in later.
+- `engine::types::Brain` returns one structured decision per observation;
+  `engine/intent.rs` routes ordinary dictation and direct app launches locally;
+  `engine/model.rs` adapts Ollama's local OpenAI-compatible endpoint,
+  cloud OpenAI-compatible endpoints, and Anthropic tool conversations.
+  `speech/provider.rs` delegates connection tests to the same protocol. Jev's
+  classification-only adapter is incompatible with this engine.
+- `engine::types::Desktop` discovers applications, observes Windows UI Automation
+  controls, captures window screenshots, and executes target-bound input. Its
+  COM objects and input device live only on the serialized executor thread.
 - `TextInjector` — `insert_text()`. Implemented as `ClipboardPasteInjector`:
   clipboard-write + simulated Ctrl+V, restoring the user's previous
   clipboard contents afterward. Native (non-clipboard) insertion may come
@@ -199,16 +212,40 @@ interrupted download is never mistaken for a valid model.
 
 ## Text injection
 
-Right after a transcription completes (`speech/worker.rs`, before emitting
-`transcription-completed`), `ClipboardPasteInjector::insert_text()` copies
-the transcript to the clipboard, simulates Ctrl+V (via `enigo`), and
-restores whatever text was previously on the clipboard. This delivers text
-system-wide, wherever OS input focus currently is — not just inside this
-app — with no detection of whether a real text field is focused. It's a
-best-effort side effect only (`log::error!` on failure, no event payload
-change): the transcript is already durably saved via the `.txt` sidecar and
-the Settings window's Transcripts tab regardless of whether the paste lands
-anywhere useful.
+The speech worker saves the `.txt` sidecar and enqueues an engine task, releasing
+the transcription worker immediately. Foreground window identity is associated
+with the recording at hotkey press. The engine runs observe → model decision →
+validation → execution → fresh observation until completed, paused, or failed.
+Application discovery reads Start Menu shortcuts, App Paths registrations, and
+packaged-app registrations; custom paths are persisted in `engine-config.json`.
+
+Observations have temporary control IDs, window PID/handle, physical geometry,
+and DPI scale. Input validates window identity, focus and geometry. Catalog and
+control excerpts are bounded; `find_apps` and `find_controls` retrieve omitted
+entries. Screenshots are PNGs in memory and coordinates are window-relative
+physical pixels. Text insertion uses the existing clipboard injector and checks
+accessible field values where available. Password fields require manual input.
+
+`engine-task` events and `get_engine_tasks` provide task snapshots. Commands
+`cancel_engine_task`, `resume_engine_task`, `get_engine_config`, and
+`save_engine_config` power Settings → Engine. Paused tasks hold the executor;
+later tasks remain queued. Confirmation executes the approved action against
+a freshly resolved target; it does not authorize a newly invented action.
+Consequential-action classification is currently model-declared, not an OS
+sandbox that can independently infer the meaning of arbitrary UI clicks.
+
+Unit tests use scripted models/fake desktops plus local mock HTTP providers.
+Ollama uses `http://localhost:11434/v1/chat/completions` without credentials;
+hosted provider keys remain in Windows Credential Manager. Provider
+conversations use named tools with individual argument schemas and
+matching assistant tool calls/tool-result messages, following the
+[Groq local tool protocol](https://console.groq.com/docs/tool-use/overview).
+Catalog/control context is bounded and searchable to fit provider request
+limits; quota waits are bounded, cancellable, and count toward active time.
+Explicit desktop tests (never part of the default suite) use configured keys:
+`cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml live_notepad_acceptance -- --ignored --nocapture --test-threads=1`
+and the same command with `live_spotify_acceptance`. These tests can pause/fail
+for login, ambiguity, missing vision configuration, model errors or quota.
 
 ## Overlay, tray, and Settings windows
 
@@ -267,9 +304,9 @@ simulation), a floating auto-hiding overlay (replacing the original full-size
 dashboard window), a separate Settings window (hotkey rebinding + transcript
 manager), and tray left-click-to-summon behavior.
 
-Out of scope, by design, forever: any LLM-based formatting, cleanup, or
-LLM/NLU-driven features (voice commands, etc.) — this product stays a pure
-local STT pipeline.
+The subsequent action-engine implementation adds model planning, Windows
+application context, and optional screenshot-based vision. Audio remains local.
+There is no model-facing shell-execution tool.
 
 Out of scope for now (deferred to later phases): VAD, real-time streaming
 transcription, a real model manager UI (switch/re-download/delete models),

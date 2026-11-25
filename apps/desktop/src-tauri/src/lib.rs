@@ -1,5 +1,7 @@
+mod ai_config;
 mod audio;
 mod config;
+mod engine;
 mod hotkeys;
 mod injection;
 mod overlay;
@@ -85,8 +87,120 @@ fn set_hotkey(app: tauri::AppHandle, shortcut: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn get_ai_settings(app: tauri::AppHandle) -> Result<ai_config::AiSettings, String> {
+    ai_config::settings(&app, ai_config::load(&app)?)
+}
+
+#[tauri::command]
+fn has_ai_api_key(provider: ai_config::AiProvider) -> Result<bool, String> {
+    ai_config::has_api_key(provider)
+}
+
+#[tauri::command]
+fn get_ai_api_key(provider: ai_config::AiProvider) -> Result<Option<String>, String> {
+    ai_config::saved_api_key(provider)
+}
+
+#[tauri::command]
+fn save_ai_settings(
+    app: tauri::AppHandle,
+    provider: ai_config::AiProvider,
+    model: String,
+    api_key: Option<String>,
+) -> Result<ai_config::AiSettings, String> {
+    ai_config::save(
+        &app,
+        ai_config::UpdateAiSettings {
+            provider,
+            model,
+            api_key,
+        },
+    )
+}
+
+#[tauri::command]
+fn remove_ai_api_key(provider: ai_config::AiProvider) -> Result<(), String> {
+    ai_config::remove_api_key(provider)
+}
+
+#[tauri::command]
+async fn test_ai_connection(provider: ai_config::AiProvider, model: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || speech::test_connection(provider, &model))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn list_ollama_models() -> Result<Vec<String>, String> {
+    let url = format!("{}/api/tags", ai_config::OLLAMA_BASE_URL);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("Could not create Ollama client: {e}"))?;
+    let response = client.get(&url).send().await.map_err(|e| {
+        format!(
+            "Could not reach local Ollama at {}: {e}",
+            ai_config::OLLAMA_BASE_URL
+        )
+    })?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Ollama returned HTTP {} while listing models",
+            response.status()
+        ));
+    }
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Ollama returned an invalid model list: {e}"))?;
+    let models = body["models"]
+        .as_array()
+        .ok_or("Ollama response did not contain a models list")?;
+    Ok(models
+        .iter()
+        .filter_map(|model| model["name"].as_str().map(str::to_string))
+        .collect())
+}
+
+#[tauri::command]
 async fn open_settings_window(app: tauri::AppHandle) -> Result<(), String> {
     overlay::open_settings_window(&app).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_engine_tasks(app: tauri::AppHandle) -> Vec<engine::types::TaskSnapshot> {
+    app.state::<engine::EngineHandle>().tasks()
+}
+#[tauri::command]
+fn cancel_engine_task(app: tauri::AppHandle, task_id: u64) -> Result<(), String> {
+    app.state::<engine::EngineHandle>().cancel(task_id)
+}
+#[tauri::command]
+fn resume_engine_task(
+    app: tauri::AppHandle,
+    task_id: u64,
+    message: String,
+    approved: bool,
+) -> Result<(), String> {
+    app.state::<engine::EngineHandle>()
+        .resume(task_id, message, approved)
+}
+#[tauri::command]
+fn submit_engine_task(app: tauri::AppHandle, transcript: String) -> Result<u64, String> {
+    let target = engine::desktop::foreground().ok_or("No foreground window")?;
+    app.state::<engine::EngineHandle>()
+        .submit(transcript, target)
+}
+#[tauri::command]
+fn get_engine_config(app: tauri::AppHandle) -> Result<engine::config::EngineConfig, String> {
+    engine::config::load(&app)
+}
+#[tauri::command]
+fn save_engine_config(
+    app: tauri::AppHandle,
+    config: engine::config::EngineConfig,
+) -> Result<(), String> {
+    engine::config::save(&app, config)
 }
 
 /// Mirrors the JSON shape of the (private) `RecordingStoppedPayload` emitted
@@ -124,7 +238,20 @@ pub fn run() {
             transcribe_recording,
             get_hotkey,
             set_hotkey,
+            get_ai_settings,
+            has_ai_api_key,
+            get_ai_api_key,
+            save_ai_settings,
+            remove_ai_api_key,
+            test_ai_connection,
+            list_ollama_models,
             open_settings_window,
+            get_engine_tasks,
+            cancel_engine_task,
+            resume_engine_task,
+            submit_engine_task,
+            get_engine_config,
+            save_engine_config,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -136,6 +263,16 @@ pub fn run() {
             tray::build(&handle)?;
 
             app.manage(overlay::OverlayState::default());
+            app.manage(engine::Engine::start(handle.clone()));
+            let capture_app = handle.clone();
+            handle.listen("recording-started", move |event| {
+                if let Ok(payload) = serde_json::from_str::<RecordingStoppedEvent>(event.payload())
+                {
+                    capture_app
+                        .state::<engine::EngineHandle>()
+                        .associate_recording(payload.path);
+                }
+            });
 
             let app_data_dir = handle
                 .path()
@@ -148,7 +285,8 @@ pub fn run() {
             app.manage(hotkey_manager);
 
             let whisper_engine = WhisperCppEngine::new(speech::model_path(&models_dir(&handle)));
-            let speech_worker: SpeechWorkerHandle = speech::spawn_worker(handle.clone(), whisper_engine);
+            let speech_worker: SpeechWorkerHandle =
+                speech::spawn_worker(handle.clone(), whisper_engine);
             app.manage(speech_worker.clone());
             app.manage(ModelDownloadGuard::default());
 

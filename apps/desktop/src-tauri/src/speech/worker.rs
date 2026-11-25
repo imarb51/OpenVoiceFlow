@@ -7,7 +7,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use super::{SpeechEngine, SpeechError};
-use crate::injection::{ClipboardPasteInjector, TextInjector};
+use tauri::Manager;
 
 const JOB_QUEUE_CAPACITY: usize = 4;
 
@@ -80,10 +80,18 @@ pub fn spawn_worker(app: AppHandle, mut engine: impl SpeechEngine + 'static) -> 
                         log::error!("failed to write transcript sidecar for {wav_path:?}: {e}");
                     }
 
-                    // Best-effort: the transcript is already durably saved
-                    // above regardless of whether this lands anywhere useful.
-                    if let Err(e) = ClipboardPasteInjector.insert_text(&transcript) {
-                        log::error!("failed to inject transcript text: {e}");
+                    // An empty result means no usable speech was recognized.
+                    // Do not launch the intent router or action engine for it.
+                    if !transcript.trim().is_empty() {
+                        // Local intent routing preserves direct dictation and
+                        // handles exact app launches before using the selected
+                        // provider for complex desktop commands.
+                        if let Err(e) = worker_app
+                            .state::<crate::engine::EngineHandle>()
+                            .submit_recording(&recording_path, transcript.clone())
+                        {
+                            log::error!("failed to enqueue engine task: {e}");
+                        }
                     }
 
                     let _ = worker_app.emit(

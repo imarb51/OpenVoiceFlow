@@ -35,7 +35,10 @@ impl HotkeyManager {
 /// Registers the initial push-to-talk shortcut (loaded from persisted config,
 /// falling back to `DEFAULT_SHORTCUT`) and wires press/release events to the
 /// audio recorder's state machine.
-pub fn register(app: &AppHandle, manager: &HotkeyManagerHandle) -> Result<(), Box<dyn std::error::Error>> {
+pub fn register(
+    app: &AppHandle,
+    manager: &HotkeyManagerHandle,
+) -> Result<(), Box<dyn std::error::Error>> {
     let shortcut_str = manager.lock().unwrap().shortcut().to_string();
     let shortcut: Shortcut = shortcut_str
         .parse()
@@ -66,7 +69,11 @@ pub fn set_shortcut(
     let old_shortcut = manager.lock().unwrap().shortcut().to_string();
 
     app.global_shortcut()
-        .unregister(old_shortcut.parse::<Shortcut>().map_err(|_| "failed to re-parse current shortcut".to_string())?)
+        .unregister(
+            old_shortcut
+                .parse::<Shortcut>()
+                .map_err(|_| "failed to re-parse current shortcut".to_string())?,
+        )
         .map_err(|e| e.to_string())?;
 
     app.global_shortcut()
@@ -77,10 +84,7 @@ pub fn set_shortcut(
 
     manager.lock().unwrap().shortcut = new_shortcut.to_string();
 
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let _ = crate::config::save(
         &app_data_dir,
         &crate::config::AppConfig {
@@ -100,9 +104,10 @@ fn handle_shortcut_event(app: &AppHandle, event: ShortcutEvent) {
 
     match event.state() {
         ShortcutState::Pressed => {
-            overlay::show(app);
             let mut recorder = recorder.lock().unwrap();
             if recorder.state() == RecordingState::Idle {
+                app.state::<crate::engine::EngineHandle>().capture_target();
+                overlay::show(app);
                 match recorder.start(app.clone()) {
                     Ok(()) => tray::set_recording_icon(app, true),
                     Err(e) => {

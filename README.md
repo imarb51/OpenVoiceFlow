@@ -1,18 +1,22 @@
 # OpenVoiceFlow
 
-Open-source, privacy-first, local-first voice dictation for the desktop.
-Hold a hotkey, speak, and the transcribed text is typed at your cursor —
-wherever you're working. Transcription runs entirely on-device via
+Open-source, local-first voice dictation and desktop actions. Hold a hotkey,
+speak, and the transcribed text is typed at your cursor — wherever you're
+working. Transcription runs entirely on-device via
 [Whisper](https://github.com/openai/whisper) (through
-[whisper.cpp](https://github.com/ggerganov/whisper.cpp)); no account, no
-cloud API, no network required after the one-time model download.
+[whisper.cpp](https://github.com/ggerganov/whisper.cpp)). Ordinary dictation is
+inserted directly and stops. Clear app-launch requests are resolved locally
+and run directly. Complex desktop tasks use the selected AI provider. Audio
+is never sent; accessible application context is sent, and screenshots are
+sent to an optional vision model when needed.
 
 ## Features
 
 - **Global push-to-talk hotkey** (`Ctrl+Space` by default, rebindable) —
   works system-wide, regardless of which window has focus.
-- **Local speech-to-text** — runs entirely on your machine, CPU-only, via
-  `whisper-rs`/whisper.cpp. No LLM, no cloud dependency, ever.
+- **Local speech-to-text** — runs on your machine, CPU-only, via
+  `whisper-rs`/whisper.cpp. The selected AI provider receives recognized text
+  only when configured.
 - **Automatic text injection** — the transcript is typed at your cursor in
   whatever app you're focused on, via clipboard-paste simulation (your
   existing clipboard contents are preserved and restored afterward).
@@ -24,7 +28,12 @@ cloud API, no network required after the one-time model download.
 - **Settings window** — rebind the push-to-talk shortcut, and browse/copy/
   delete past recordings and their transcripts.
 - **Local history** — every recording and its transcript are saved
-  alongside each other on disk; nothing is uploaded anywhere.
+  alongside each other on disk; audio remains on the device.
+- **LLM action engine** — discover/open/focus applications, type text, send
+  keyboard shortcuts, and move/click/scroll the pointer. The model observes
+  results after each step; common direct app launches use a local fast path.
+- **Engine task controls** — view queued/running tasks, cancel, answer questions,
+  approve consequential actions, and resume after manual login.
 
 ## Installation
 
@@ -41,6 +50,30 @@ the [Releases](../../releases) page and run it. Windows only for now (see
    cursor a moment later.
 4. Right-click the tray icon (or the overlay itself) to open **Settings**
    and change the hotkey or review past transcripts.
+
+Open **Settings → AI Provider** and select Ollama, OpenAI, Anthropic, xAI, or
+Groq. Ollama connects to `http://localhost:11434` and needs no API key; enter a
+model name available from `ollama list`. Hosted providers need a model supporting
+tool calls and an API key, stored per provider in Windows Credential Manager.
+Save the settings and test the connection. Jev's classification interface
+cannot run the engine. Provider failures preserve the transcript and report an
+error rather than pasting the instruction into an arbitrary field.
+
+**Settings → Engine** shows tasks and controls, optional vision provider/model
+selection, and additional executable registrations. Accessibility context is
+used first; screenshots require a configured model supporting images and tools.
+Sign-in and protected prompts are handled manually. Application content is
+untrusted context; model-declared sending/deleting/purchasing actions require
+explicit confirmation. Completion is model-evaluated from observed context.
+
+The engine defaults to 40 actions, five minutes of active execution, and two
+recovery attempts per failed step. Screenshots stay in memory. Local
+`engine-events.jsonl` contains task IDs/status/step counts, without credentials
+or screenshots. Provider diagnostics in the dev log include provider/model,
+elapsed time, status, and error class, without transcripts or screenshots.
+Cancelling prevents further actions; an outstanding provider request may take
+up to 30 seconds for hosted providers or 120 seconds for local Ollama to return
+and is then discarded.
 
 ## Development
 
@@ -84,9 +117,9 @@ Not yet built, in rough priority order:
 - macOS and Linux support (development and testing so far is Windows-only)
 - Packaging for other platforms / auto-update
 
-No LLM-based text formatting or cloud provider is planned — this project's
-whole premise is a local speech pipeline that's accurate and fast enough
-on its own.
+Speech recognition and action execution remain local. A selected hosted
+provider plans actions from application context; Rust validates typed tool
+requests and executes desktop operations. The engine has no shell-execution tool.
 
 ## Contributing
 

@@ -27,6 +27,14 @@ pub enum InjectionError {
 
 pub trait TextInjector: Send {
     fn insert_text(&self, text: &str) -> Result<(), InjectionError>;
+    fn insert_text_checked(
+        &self,
+        text: &str,
+        validate: &dyn Fn() -> Result<(), InjectionError>,
+    ) -> Result<(), InjectionError> {
+        validate()?;
+        self.insert_text(text)
+    }
 }
 
 /// Copies `text` to the clipboard and simulates Ctrl+V, restoring whatever
@@ -36,33 +44,50 @@ pub struct ClipboardPasteInjector;
 
 impl TextInjector for ClipboardPasteInjector {
     fn insert_text(&self, text: &str) -> Result<(), InjectionError> {
+        self.insert_text_checked(text, &|| Ok(()))
+    }
+    fn insert_text_checked(
+        &self,
+        text: &str,
+        validate: &dyn Fn() -> Result<(), InjectionError>,
+    ) -> Result<(), InjectionError> {
         let mut clipboard =
             Clipboard::new().map_err(|e| InjectionError::Clipboard(e.to_string()))?;
 
         let previous = clipboard.get_text().ok();
+        let previous_image = if previous.is_none() {
+            clipboard.get_image().ok()
+        } else {
+            None
+        };
 
-        clipboard
-            .set_text(text.to_string())
-            .map_err(|e| InjectionError::Clipboard(e.to_string()))?;
+        let result = (|| {
+            clipboard
+                .set_text(text.to_string())
+                .map_err(|e| InjectionError::Clipboard(e.to_string()))?;
+            thread::sleep(PASTE_DELAY);
+            validate()?;
+            let mut enigo = Enigo::new(&Settings::default())
+                .map_err(|e| InjectionError::Input(e.to_string()))?;
+            let pasted = (|| {
+                enigo.key(Key::Control, Direction::Press)?;
+                enigo.key(Key::Unicode('v'), Direction::Click)
+            })();
+            let released = enigo.key(Key::Control, Direction::Release);
+            pasted
+                .and(released)
+                .map_err(|e| InjectionError::Input(e.to_string()))
+        })();
+
         thread::sleep(PASTE_DELAY);
-
-        let mut enigo =
-            Enigo::new(&Settings::default()).map_err(|e| InjectionError::Input(e.to_string()))?;
-        enigo
-            .key(Key::Control, Direction::Press)
-            .map_err(|e| InjectionError::Input(e.to_string()))?;
-        enigo
-            .key(Key::Unicode('v'), Direction::Click)
-            .map_err(|e| InjectionError::Input(e.to_string()))?;
-        enigo
-            .key(Key::Control, Direction::Release)
-            .map_err(|e| InjectionError::Input(e.to_string()))?;
-
-        thread::sleep(PASTE_DELAY);
-        if let Some(previous) = previous {
-            let _ = clipboard.set_text(previous);
-        }
-
-        Ok(())
+        let restored = if let Some(previous) = previous {
+            clipboard.set_text(previous)
+        } else if let Some(previous) = previous_image {
+            clipboard.set_image(previous)
+        } else {
+            clipboard.clear()
+        };
+        result?;
+        restored.map_err(|e| InjectionError::Clipboard(e.to_string()))
     }
 }
