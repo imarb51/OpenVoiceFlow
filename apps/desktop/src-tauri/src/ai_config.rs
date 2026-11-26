@@ -9,9 +9,11 @@ pub enum AiProvider {
     Jev,
     Ollama,
     OpenAi,
+    Gemini,
     Anthropic,
     Xai,
     Groq,
+    OpenRouter,
 }
 
 impl AiProvider {
@@ -20,9 +22,11 @@ impl AiProvider {
             Self::Jev => "jev",
             Self::Ollama => "ollama",
             Self::OpenAi => "openai",
+            Self::Gemini => "gemini",
             Self::Anthropic => "anthropic",
             Self::Xai => "xai",
             Self::Groq => "groq",
+            Self::OpenRouter => "openrouter",
         }
     }
 
@@ -31,9 +35,11 @@ impl AiProvider {
             Self::Jev => "jev-latest",
             Self::Ollama => "gemma4:12b",
             Self::OpenAi => "gpt-4.1-mini",
+            Self::Gemini => "gemini-3.8-flash",
             Self::Anthropic => "claude-haiku-4-5-20251001",
             Self::Xai => "grok-4.7",
             Self::Groq => "openai/gpt-oss-20b",
+            Self::OpenRouter => "openrouter/free",
         }
     }
 }

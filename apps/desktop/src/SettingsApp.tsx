@@ -11,7 +11,7 @@ import type {
 } from "./types";
 
 type Tab = "hotkey" | "transcripts";
-type AiProvider = "jev" | "ollama" | "open_ai" | "anthropic" | "xai" | "groq";
+type AiProvider = "jev" | "ollama" | "open_ai" | "gemini" | "anthropic" | "xai" | "groq" | "open_router";
 
 interface AiSettings {
   provider: AiProvider;
@@ -23,11 +23,12 @@ const PROVIDER_OPTIONS: { id: AiProvider; label: string; model: string }[] = [
   { id: "jev", label: "Jev", model: "jev-latest" },
   { id: "ollama", label: "Ollama (local)", model: "gemma4:12b" },
   { id: "open_ai", label: "OpenAI", model: "gpt-4.1-mini" },
+  { id: "gemini", label: "Google Gemini", model: "gemini-3.8-flash" },
   { id: "anthropic", label: "Claude (Anthropic)", model: "claude-haiku-4-5-20251001" },
   { id: "xai", label: "Grok (xAI)", model: "grok-4.7" },
   { id: "groq", label: "Groq", model: "openai/gpt-oss-20b" },
+  { id: "open_router", label: "OpenRouter", model: "openrouter/free" },
 ];
-
 const MODIFIER_CODES = new Set(["ControlLeft", "ControlRight", "AltLeft", "AltRight", "ShiftLeft", "ShiftRight", "MetaLeft", "MetaRight"]);
 
 function codeToKeyToken(code: string): string {
@@ -306,8 +307,10 @@ function AiProviderTab() {
         <p className="mt-1 text-xs text-neutral-400 dark:text-neutral-500">
           Choose the service that routes voice requests to OpenVoiceFlow actions.
         </p>
-        {provider === "jev" && <p className="mt-2 text-xs text-amber-600">Jev's classification interface cannot run the action engine. Choose Ollama, OpenAI, Groq, Grok, or Anthropic.</p>}
+        {provider === "jev" && <p className="mt-2 text-xs text-amber-600">Jev's classification interface cannot run the action engine. Choose a tool-capable provider such as Ollama, OpenAI, Gemini, Groq, Grok, Anthropic, or OpenRouter.</p>}
         {provider === "ollama" && <p className="mt-2 text-xs text-neutral-500">Connects to the local Ollama server at http://localhost:11434. No API key is required; use a model name shown by `ollama list`.</p>}
+        {provider === "gemini" && <p className="mt-2 text-xs text-neutral-500">Use a Gemini API key from Google AI Studio. Gemini supports the action engine and image-based vision fallback.</p>}
+        {provider === "open_router" && <p className="mt-2 text-xs text-neutral-500">Use an OpenRouter API key. The openrouter/free router is the default and filters for tool-capable free models; free model availability and rate limits can vary.</p>}
       </div>
 
       <label className="flex flex-col gap-1 text-xs font-medium">
@@ -625,42 +628,64 @@ function SettingsApp() {
     return () => { void subscription.then(unlisten => unlisten()); };
   }, []);
 
+  const sectionLabels: Record<Tab | "ai" | "engine", string> = {
+    hotkey: "Hotkey",
+    ai: "AI Provider",
+    engine: "Engine",
+    transcripts: "Transcripts",
+  };
+
   return (
-    <main className="min-h-screen bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-50">
-      <div className="mx-auto flex min-h-screen max-w-lg flex-col gap-6 px-6 py-8">
-        <header>
-          <h1 className="text-lg font-semibold tracking-tight">Settings</h1>
-        </header>
+    <main className="settings-shell">
+      <div className="settings-layout">
+        <aside className="settings-sidebar">
+          <header className="settings-header">
+            <span className="settings-product">OpenVoiceFlow <span>· Desktop</span></span>
+            <h1>Settings</h1>
+          </header>
 
-        <ModelBanner />
+          <section className="settings-profile" aria-label="Local profile">
+            <div className="settings-profile-avatar" aria-hidden="true">OV</div>
+            <div className="settings-profile-fields">
+              <span className="settings-profile-label">Local profile</span>
+              <span className="settings-profile-name">OpenVoiceFlow</span>
+              <span className="settings-profile-note">This device</span>
+            </div>
+          </section>
 
-        <nav className="grid grid-cols-2 gap-1 rounded-lg bg-neutral-100 p-1 dark:bg-neutral-900">
-          {(
-            [
-              ["hotkey", "Hotkey"],
-              ["ai", "AI Provider"],
-              ["engine", "Engine"],
-              ["transcripts", "Transcripts"],
-            ] as [Tab | "ai" | "engine", string][]
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setTab(value)}
-              className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                tab === value
-                  ? "bg-white text-neutral-900 shadow-sm dark:bg-neutral-800 dark:text-neutral-50"
-                  : "text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </nav>
+          <nav className="settings-tabs" aria-label="Settings sections">
+            {(
+              [
+                ["hotkey", "Hotkey"],
+                ["ai", "AI Provider"],
+                ["engine", "Engine"],
+                ["transcripts", "Transcripts"],
+              ] as [Tab | "ai" | "engine", string][]
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setTab(value)}
+                aria-current={tab === value ? "page" : undefined}
+                className={`settings-tab ${tab === value ? "settings-tab--active" : ""}`}
+              >
+                <span className={`settings-nav-mark settings-nav-mark--${value}`} aria-hidden="true" />
+                {label}
+              </button>
+            ))}
+          </nav>
 
-        <div className="flex-1">
-          {tab === "hotkey" ? <HotkeyTab /> : tab === "ai" ? <AiProviderTab /> : tab === "engine" ? <EnginePanel /> : <TranscriptsTab />}
-        </div>
+          <p className="settings-sidebar-foot">Preferences stay on this device.</p>
+        </aside>
+
+        <section className="settings-main" aria-label={`${sectionLabels[tab]} settings`}>
+          <div className="settings-panel">
+            <ModelBanner />
+            <div className="settings-content">
+              {tab === "hotkey" ? <HotkeyTab /> : tab === "ai" ? <AiProviderTab /> : tab === "engine" ? <EnginePanel /> : <TranscriptsTab />}
+            </div>
+          </div>
+        </section>
       </div>
     </main>
   );

@@ -64,6 +64,11 @@ pub enum Action {
         control_id: Option<String>,
         text: String,
     },
+    Search {
+        observation_id: u64,
+        control_id: String,
+        query: String,
+    },
     Key {
         observation_id: u64,
         keys: Vec<String>,

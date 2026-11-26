@@ -40,12 +40,21 @@ fn normalize(text: &str) -> String {
 fn strip_polite_prefix(text: &str) -> String {
     let mut value = text.trim().to_string();
     let prefixes = [
+        "hey dad there ",
+        "hey dad ",
+        "dad there ",
+        "hey emu there ",
+        "hey emu ",
+        "emu there ",
+        "dad ",
+        "emu ",
+        "there ",
         "could you please ",
         "would you please ",
         "can you please ",
+        "can you ",
         "could you ",
         "would you ",
-        "can you ",
         "will you ",
         "please ",
         "hey there ",

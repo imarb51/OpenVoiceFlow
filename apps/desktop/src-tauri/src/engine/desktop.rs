@@ -463,6 +463,99 @@ impl Desktop for NativeDesktop {
                     }
                 }
             }
+            Action::Search {
+                observation_id,
+                control_id,
+                query,
+            } => {
+                self.check(*observation_id, o)?;
+                let query = query.trim();
+                if query.is_empty() || query.len() > 2048 {
+                    return Err("Search query must contain 1–2048 characters".into());
+                }
+                let info = o
+                    .controls
+                    .iter()
+                    .find(|control| control.id == *control_id)
+                    .ok_or("Search field is not in the current observation")?;
+                if !info.editable {
+                    return Err("Search target is not an editable field".into());
+                }
+                let label = format!("{} {}", info.name, info.value.as_deref().unwrap_or(""))
+                    .to_lowercase();
+                if !["search", "find", "query"]
+                    .iter()
+                    .any(|word| label.contains(word))
+                {
+                    return Err("Choose an observed field labeled Search, Find, or Query".into());
+                }
+                unsafe {
+                    self.control(control_id, o)?.SetFocus().map_err(|e| e.to_string())?;
+                }
+                let focused = unsafe {
+                    self.automation
+                        .GetFocusedElement()
+                        .map_err(|e| e.to_string())?
+                };
+                if unsafe { focused.CurrentIsPassword().unwrap_or(BOOL(1)).as_bool() }
+                    || unsafe { focused.CurrentProcessId().unwrap_or_default() } as u32 != o.window.pid
+                {
+                    return Err("Search target is unsafe or belongs to another application".into());
+                }
+                let chord = [Key::Control, Key::Unicode('a')];
+                for key in chord {
+                    self.input.key(key, Direction::Press).map_err(map)?;
+                }
+                for key in chord.iter().rev() {
+                    let _ = self.input.key(*key, Direction::Release);
+                }
+                ClipboardPasteInjector
+                    .insert_text_checked(query, &|| {
+                        use crate::injection::InjectionError;
+                        if self.cancelled.load(Ordering::SeqCst)
+                            || !foreground().is_some_and(|w| {
+                                w.handle == o.window.handle && w.pid == o.window.pid
+                            })
+                        {
+                            return Err(InjectionError::Input(
+                                "Focus changed or task cancelled before search input".into(),
+                            ));
+                        }
+                        let same = unsafe {
+                            self.automation.GetFocusedElement().and_then(|current| {
+                                self.automation.CompareElements(&focused, &current)
+                            })
+                        }
+                        .is_ok_and(|v| v.as_bool());
+                        if !same {
+                            return Err(InjectionError::Input(
+                                "Search field lost focus before input".into(),
+                            ));
+                        }
+                        Ok(())
+                    })
+                    .map_err(|e| e.to_string())?;
+                if let Ok(pattern) = unsafe {
+                    focused.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+                } {
+                    let deadline = Instant::now() + Duration::from_secs(2);
+                    let mut matched = false;
+                    while Instant::now() < deadline {
+                        if unsafe { pattern.CurrentValue() }
+                            .is_ok_and(|value| value.to_string().contains(query))
+                        {
+                            matched = true;
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(40));
+                    }
+                    if !matched {
+                        return Err("Search text was not confirmed in the selected field; not submitting".into());
+                    }
+                }
+                self.input.key(Key::Return, Direction::Press).map_err(map)?;
+                let _ = self.input.key(Key::Return, Direction::Release);
+            }
             Action::Key {
                 observation_id,
                 keys,

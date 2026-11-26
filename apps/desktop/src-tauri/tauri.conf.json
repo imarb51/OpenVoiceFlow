@@ -14,8 +14,8 @@
       {
         "label": "main",
         "title": "OpenVoiceFlow",
-        "width": 200,
-        "height": 44,
+        "width": 392,
+        "height": 64,
         "resizable": false,
         "decorations": false,
         "transparent": true,

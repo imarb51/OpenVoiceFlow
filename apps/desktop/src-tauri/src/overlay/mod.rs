@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, LogicalPosition, Manager, WebviewUrl, WebviewWindowBuilder};
 
 const HIDE_DELAY: Duration = Duration::from_secs(10);
-const OVERLAY_WIDTH: f64 = 200.0;
-const OVERLAY_HEIGHT: f64 = 44.0;
+const OVERLAY_WIDTH: f64 = 392.0;
+const OVERLAY_HEIGHT: f64 = 64.0;
 /// Approximate clearance above the taskbar. Tauri has no direct "taskbar
 /// bounds" API, so this is a fixed margin rather than an exact measurement.
 const BOTTOM_MARGIN: f64 = 72.0;
@@ -60,8 +60,17 @@ pub fn position_overlay(app: &AppHandle) {
     let logical_x = monitor_pos.x as f64 / scale;
     let logical_y = monitor_pos.y as f64 / scale;
 
-    let x = logical_x + (logical_width - OVERLAY_WIDTH) / 2.0;
-    let y = logical_y + logical_height - OVERLAY_HEIGHT - BOTTOM_MARGIN;
+    // The React HUD can grow beyond the compact startup pill when it shows a
+    // task, result, or approval card. Read the live native size on every
+    // show so a re-shown overlay remains fully above the taskbar even when
+    // its content did not change since it was last hidden.
+    let (overlay_width, overlay_height) = window
+        .inner_size()
+        .map(|size| (size.width as f64 / scale, size.height as f64 / scale))
+        .unwrap_or((OVERLAY_WIDTH, OVERLAY_HEIGHT));
+
+    let x = logical_x + (logical_width - overlay_width) / 2.0;
+    let y = logical_y + logical_height - overlay_height - BOTTOM_MARGIN;
 
     let _ = window.set_position(LogicalPosition::new(x, y));
 }

@@ -66,6 +66,7 @@ fn run_inner(
     let mut failures = 0;
     let mut turns = 0;
     let mut provider_retries = 0;
+    let mut new_tab_just_opened = false;
     let mut observation = desktop.observe(&original, false)?;
     let mut apps = desktop.catalog();
     let mut history = Vec::new();
@@ -92,17 +93,27 @@ fn run_inner(
             }
             Err(e) if e.starts_with("RATE_LIMIT:") => {
                 provider_retries += 1;
+                let retry_info = e.trim_start_matches("RATE_LIMIT:");
+                let (retry_seconds, provider_detail) = retry_info
+                    .split_once(':')
+                    .map(|(seconds, detail)| (seconds, detail))
+                    .unwrap_or((retry_info, ""));
                 if provider_retries > 2 {
-                    return Err("Provider rate limit persisted after two waits. Retry later or use a provider with sufficient quota".into());
+                    let detail = if provider_detail.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" Provider said: {provider_detail}")
+                    };
+                    return Err(format!("Provider rate limit persisted after two waits. Retry later or use a provider with sufficient quota.{detail}"));
                 }
-                let seconds = e
-                    .trim_start_matches("RATE_LIMIT:")
+                let seconds = retry_seconds
                     .parse::<u64>()
                     .unwrap_or(15)
                     .clamp(1, 60);
+                let detail = if provider_detail.is_empty() { String::new() } else { format!(": {}", provider_detail.chars().take(120).collect::<String>()) };
                 control.update(
                     "waiting_provider",
-                    &format!("Provider rate limit; retrying in {seconds} seconds"),
+                    &format!("Provider rate limit; retrying in {seconds} seconds{detail}"),
                     Some(&observation),
                     steps,
                 );
@@ -236,6 +247,17 @@ fn run_inner(
                 consequential,
                 action,
             } => {
+                if new_tab_just_opened
+                    && is_new_tab_shortcut(action)
+                    && !requests_multiple_tabs(transcript)
+                {
+                    history.push(Turn {
+                        decision: Some(decision.clone()),
+                        result: "A new tab was just opened. Reusing that tab; do not open another one unless the user requested multiple tabs.".into(),
+                    });
+                    observation = desktop.observe(&observation.window, observation.screenshot.is_some())?;
+                    continue;
+                }
                 let mut approved_action = action.clone();
                 if requires_confirmation(action, &observation, *consequential) {
                     let start = Instant::now();
@@ -258,6 +280,13 @@ fn run_inner(
                 let screenshot = matches!(approved_action, Action::Observe { screenshot: true });
                 match desktop.execute(&approved_action, &observation) {
                     Ok(target) => {
+                        match &approved_action {
+                            Action::Key { .. } if is_new_tab_shortcut(&approved_action) => {
+                                new_tab_just_opened = true;
+                            }
+                            Action::Observe { .. } | Action::FindControls { .. } => {}
+                            _ => new_tab_just_opened = false,
+                        }
                         apps = desktop.catalog();
                         history.push(Turn {
                             decision: Some(decision.clone()),
@@ -344,6 +373,24 @@ fn requires_confirmation(action: &Action, observation: &Observation, declared: b
         _ => false,
     }
 }
+fn is_new_tab_shortcut(action: &Action) -> bool {
+    if let Action::Key { keys, .. } = action {
+        let keys = keys
+            .iter()
+            .map(|key| key.to_lowercase().replace("control", "ctrl"))
+            .collect::<Vec<_>>();
+        return keys == ["ctrl", "t"] || keys == ["t", "ctrl"];
+    }
+    false
+}
+
+fn requests_multiple_tabs(transcript: &str) -> bool {
+    let task = transcript.to_lowercase();
+    ["two tabs", "2 tabs", "multiple tabs", "several tabs", "another tab", "new tabs"]
+        .iter()
+        .any(|phrase| task.contains(phrase))
+}
+
 fn rebind(action: &Action, old: &Observation, new: &Observation) -> Result<Action, String> {
     if old.window.handle != new.window.handle || old.window.pid != new.window.pid {
         return Err("Approved target window changed".into());
@@ -671,7 +718,9 @@ impl TaskControl for LiveControl {
             None,
             usize::MAX,
         );
-        let _ = crate::overlay::open_settings_window(&self.engine.app);
+        // The overlay presents approvals and clarification prompts in place;
+        // keep Settings out of the task interaction flow.
+        crate::overlay::show(&self.engine.app);
         let _ = self.engine.app.emit("engine-needs-attention", self.id);
         loop {
             if self.cancelled() {

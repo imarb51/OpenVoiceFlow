@@ -6,7 +6,7 @@ export interface EngineTask {
   id: number; transcript: string; status: string; message: string;
   application: string | null; steps: number;
 }
-type Provider = "ollama" | "open_ai" | "anthropic" | "xai" | "groq";
+type Provider = "ollama" | "open_ai" | "gemini" | "anthropic" | "xai" | "groq" | "open_router";
 interface RegisteredApp { id: string; name: string; executable: string; arguments: string[] }
 interface EngineConfig { vision: { provider: Provider; model: string } | null; applications: RegisteredApp[] }
 const terminal = new Set(["completed", "failed", "cancelled"]);
@@ -61,7 +61,7 @@ export default function EnginePanel() {
       <label className="text-xs"><input type="checkbox" checked={config.vision !== null} onChange={e => setConfig(c => ({ ...c, vision: e.target.checked ? { provider: "open_ai", model: "" } : null }))} /> Enable vision fallback</label>
       {config.vision && <>
         <label className="text-xs">Vision provider<select className={input} value={config.vision.provider} onChange={e => setConfig(c => ({ ...c, vision: { ...c.vision!, provider: e.target.value as Provider } }))}>
-          <option value="ollama">Ollama (local)</option><option value="open_ai">OpenAI</option><option value="anthropic">Anthropic</option><option value="xai">Grok (xAI)</option><option value="groq">Groq</option>
+          <option value="ollama">Ollama (local)</option><option value="open_ai">OpenAI</option><option value="gemini">Google Gemini</option><option value="anthropic">Anthropic</option><option value="xai">Grok (xAI)</option><option value="groq">Groq</option><option value="open_router">OpenRouter</option>
         </select></label>
         <label className="text-xs">Vision-capable model ID<input className={input} value={config.vision.model} onChange={e => setConfig(c => ({ ...c, vision: { ...c.vision!, model: e.target.value } }))} placeholder="Model supporting images and tool calls" /></label>
       </>}
